@@ -2,15 +2,16 @@ import numpy as np
 import scipy
 import torch
 import torch.nn as nn
+import torchvision.models
 import torchvision.models as tvmodels
 import torch.nn.functional as F
-
+from torch.utils.data import DataLoader
+from torch.autograd import Variable
+from scipy.stats import entropy
 
 """
 src repo: https://github.com/mseitzer/pytorch-fid
 """
-
-
 
 
 class InceptionV3(nn.Module):
@@ -129,7 +130,7 @@ class InceptionV3(nn.Module):
 
 
 def _calculate_activation_statistics(images, model, batch_size=128, dims=2048,
-                                    device="cpu"):
+                                     device="cpu"):
     model.eval()
     act = np.empty((len(images), dims))
 
@@ -191,12 +192,79 @@ def _calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 
 def FID(images_real, images_fake,
         model=InceptionV3([InceptionV3.BLOCK_INDEX_BY_DIM[2048]]), device="cpu"):
+    # One channel image
+    if images_fake.shape[1] == 1:
+        images_fake = images_fake.repeat(1, 3, 1, 1)
+    if images_real.shape[1] == 1:
+        images_real = images_real.repeat(1, 3, 1, 1)
+
     mu_1, std_1 = _calculate_activation_statistics(images_real, model, device=device)
     mu_2, std_2 = _calculate_activation_statistics(images_fake, model, device=device)
 
     """get fretched distance"""
     fid_value = _calculate_frechet_distance(mu_1, std_1, mu_2, std_2)
     return fid_value
+
+
+def IS(imgs, cuda=True, batch_size=32, resize=False, splits=1):
+    """Computes the inception score of the generated images imgs
+
+    imgs -- Torch dataset of (3xHxW) numpy images normalized in the range [-1, 1]
+    cuda -- whether or not to run on GPU
+    batch_size -- batch size for feeding into Inception v3
+    splits -- number of splits
+    """
+    N = len(imgs)
+    if imgs.shape[1] == 1:
+        imgs = imgs.repeat(1, 3, 1, 1)
+    # assert batch_size > 0
+    # assert N >= batch_size
+
+    # Set up dtype
+    if cuda:
+        dtype = torch.cuda.FloatTensor
+    else:
+        if torch.cuda.is_available():
+            print("WARNING: You have a CUDA device, so you should probably set cuda=True")
+        dtype = torch.FloatTensor
+
+    # Set up dataloader
+    dataloader = DataLoader(imgs, batch_size=batch_size)
+
+    # Load inception model
+    inception_model = torchvision.models.inception_v3(pretrained=True, transform_input=False).type(dtype)
+    inception_model.eval()
+    up = nn.Upsample(size=(299, 299), mode='bilinear').type(dtype)
+
+    def get_pred(x):
+        if resize:
+            x = up(x)
+        x = inception_model(x)
+        return F.softmax(x, dim=0).data.cpu().numpy()
+
+    # Get predictions
+    preds = np.zeros((N, 1000))
+
+    for i, batch in enumerate(dataloader, 0):
+        batch = batch.type(dtype)
+        batchv = Variable(batch)
+        batch_size_i = batch.size()[0]
+
+        preds[i * batch_size:i * batch_size + batch_size_i] = get_pred(batchv)
+
+    # Now compute the mean kl-div
+    split_scores = []
+
+    for k in range(splits):
+        part = preds[k * (N // splits): (k + 1) * (N // splits), :]
+        py = np.mean(part, axis=0)
+        scores = []
+        for i in range(part.shape[0]):
+            pyx = part[i, :]
+            scores.append(entropy(pyx, py))
+        split_scores.append(np.exp(np.mean(scores)))
+
+    return np.mean(split_scores), np.std(split_scores)
 
 
 from generator.convgen import ConvGenerator
@@ -210,14 +278,14 @@ if __name__ == "__main__":
     transform = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
-     ])
+    ])
     cls = "automobile"
     batch_size = 64
     trainloader, testloader = get_cifar10_dataloader(cls, batch_size, img_size,
                                                      data_path="../data", transform=transform)
 
     Gen = ConvGenerator(dim_z=100, img_size=img_size, hidden_size=512, out_channels=3)
-    gen_state_dict = torch.load("../runtime/CIFAR_automobile/checkpoints/ckpt_Gen_epoch100")
+    gen_state_dict = torch.load("../runtime/CIFAR_automobile/checkpoints/ckpt_Gen_epoch100.pt")
 
     Gen.to(device)
     Gen.load_state_dict(gen_state_dict[0]['model_dict'])
@@ -235,3 +303,4 @@ if __name__ == "__main__":
 
     print("Do normalize:", FID(real_imgs_norm, fake_imgs))
 
+    print("IS: ", IS(fake_imgs, resize=True))

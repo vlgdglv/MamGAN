@@ -7,7 +7,7 @@ import datetime as dt
 def init_model(model: nn.Module):
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
-            torch.nn.init.kaiming_normal_(m.weight.data)
+            torch.nn.init.normal_(m.weight.data, 0, 0.02)
             if m.bias is not None:
                 torch.nn.init.constant_(m.bias.data, 0.3)
         elif isinstance(m, nn.Linear):
@@ -15,8 +15,17 @@ def init_model(model: nn.Module):
             if m.bias is not None:
                 torch.nn.init.zeros_(m.bias.data)
         elif isinstance(m, nn.BatchNorm2d):
-            m.weight.data.fill_(1)
+            torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
             m.bias.data.fill_(0)
+
+
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
 
 
 def check_path(path):

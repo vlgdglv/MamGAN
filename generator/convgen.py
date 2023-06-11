@@ -8,32 +8,37 @@ class ConvGenerator(nn.Module):
         self.img_size = img_size
         self.hidden_size = hidden_size
         self.out_channels = out_channels
-        self.head_size = img_size // 4
 
-        self.linear = nn.Linear(dim_z, self.hidden_size * self.head_size ** 2)
         self.conver = nn.Sequential(
+            nn.ConvTranspose2d(dim_z, hidden_size * 8, kernel_size=4, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(self.hidden_size * 8),
+            nn.ReLU(inplace=True),
+
+            nn.ConvTranspose2d(hidden_size * 8, hidden_size * 4, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(self.hidden_size * 4),
+            nn.ReLU(inplace=True),
+
+            nn.ConvTranspose2d(hidden_size * 4, hidden_size * 2, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(self.hidden_size * 2),
+            nn.ReLU(inplace=True),
+
+            nn.ConvTranspose2d(hidden_size * 2, hidden_size * 1, kernel_size=4, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(self.hidden_size),
-            nn.Upsample(scale_factor=2),
-            nn.Conv2d(self.hidden_size, self.hidden_size, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(self.hidden_size, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Upsample(scale_factor=2),
-            nn.Conv2d(self.hidden_size, self.hidden_size // 2, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(self.hidden_size // 2, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(self.hidden_size // 2, self.out_channels, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+
+            nn.ConvTranspose2d(hidden_size, out_channels, kernel_size=4, stride=2, padding=1, bias=False),
             nn.Tanh()
         )
 
     def forward(self, x):
-        o = self.linear(x)
-        o = o.view(o.shape[0], self.hidden_size, self.head_size, self.head_size)
-        o = self.conver(o)
+        o = self.conver(x)
         return o
 
 
 if __name__ == "__main__":
     dim_z = 100
-    z = torch.rand((3, dim_z))
+    z = torch.rand((3, dim_z, 1, 1))
     g = ConvGenerator(dim_z=dim_z)
+    print(g)
     print(g(z).shape)
+
